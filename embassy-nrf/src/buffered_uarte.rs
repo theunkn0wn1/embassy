@@ -4,7 +4,6 @@
 //!
 //! - nrf52832: Section 35
 //! - nrf52840: Section 6.34
-use core::cell::UnsafeCell;
 use core::cmp::min;
 use core::marker::PhantomPinned;
 use core::ops::Deref;
@@ -12,6 +11,7 @@ use core::pin::Pin;
 use core::ptr;
 use core::sync::atomic::{compiler_fence, Ordering};
 use core::task::{Context, Poll};
+use core::{cell::UnsafeCell, marker::PhantomData};
 use embassy::io::{AsyncBufRead, AsyncWrite, Result};
 use embassy::util::WakerRegistration;
 use embedded_hal::digital::v2::OutputPin;
@@ -20,90 +20,11 @@ use crate::fmt::{assert, panic, todo, *};
 use crate::hal::gpio::Port as GpioPort;
 use crate::interrupt::{self, CriticalSection, OwnedInterrupt};
 use crate::pac::uarte0;
+use crate::ring_buffer::RingBuffer;
 
 // Re-export SVD variants to allow user to directly set values
 pub use crate::hal::uarte::Pins;
 pub use uarte0::{baudrate::BAUDRATE_A as Baudrate, config::PARITY_A as Parity};
-
-const RINGBUF_SIZE: usize = 512;
-struct RingBuf {
-    buf: [u8; RINGBUF_SIZE],
-    start: usize,
-    end: usize,
-    empty: bool,
-}
-
-impl RingBuf {
-    fn new() -> Self {
-        RingBuf {
-            buf: [0; RINGBUF_SIZE],
-            start: 0,
-            end: 0,
-            empty: true,
-        }
-    }
-
-    fn push_buf(&mut self) -> &mut [u8] {
-        if self.start == self.end && !self.empty {
-            trace!("  ringbuf: push_buf empty");
-            return &mut self.buf[..0];
-        }
-
-        let n = if self.start <= self.end {
-            RINGBUF_SIZE - self.end
-        } else {
-            self.start - self.end
-        };
-
-        trace!("  ringbuf: push_buf {:?}..{:?}", self.end, self.end + n);
-        &mut self.buf[self.end..self.end + n]
-    }
-
-    fn push(&mut self, n: usize) {
-        trace!("  ringbuf: push {:?}", n);
-        if n == 0 {
-            return;
-        }
-
-        self.end = Self::wrap(self.end + n);
-        self.empty = false;
-    }
-
-    fn pop_buf(&mut self) -> &mut [u8] {
-        if self.empty {
-            trace!("  ringbuf: pop_buf empty");
-            return &mut self.buf[..0];
-        }
-
-        let n = if self.end <= self.start {
-            RINGBUF_SIZE - self.start
-        } else {
-            self.end - self.start
-        };
-
-        trace!("  ringbuf: pop_buf {:?}..{:?}", self.start, self.start + n);
-        &mut self.buf[self.start..self.start + n]
-    }
-
-    fn pop(&mut self, n: usize) {
-        trace!("  ringbuf: pop {:?}", n);
-        if n == 0 {
-            return;
-        }
-
-        self.start = Self::wrap(self.start + n);
-        self.empty = self.start == self.end;
-    }
-
-    fn wrap(n: usize) -> usize {
-        assert!(n <= RINGBUF_SIZE);
-        if n == RINGBUF_SIZE {
-            0
-        } else {
-            n
-        }
-    }
-}
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 enum RxState {
@@ -126,27 +47,25 @@ enum TxState {
 ///   are disabled before using `Uarte`. See product specification:
 ///     - nrf52832: Section 15.2
 ///     - nrf52840: Section 6.1.2
-pub struct BufferedUarte<T: Instance> {
-    started: bool,
-    state: UnsafeCell<UarteState<T>>,
+pub struct BufferedUarte<'a, T: Instance> {
+    reg: PeripheralRegistration<T::State<'a>>,
+    wtf: PhantomData<&'a ()>,
 }
 
 // public because it needs to be used in Instance::{get_state, set_state}, but
 // should not be used outside the module
 #[doc(hidden)]
-pub struct UarteState<T: Instance> {
+pub struct UarteState<'a, T: Instance> {
     inner: T,
     irq: T::Interrupt,
 
-    rx: RingBuf,
+    rx: RingBuffer<'a>,
     rx_state: RxState,
     rx_waker: WakerRegistration,
 
-    tx: RingBuf,
+    tx: RingBuffer<'a>,
     tx_state: TxState,
     tx_waker: WakerRegistration,
-
-    _pin: PhantomPinned,
 }
 
 #[cfg(any(feature = "52833", feature = "52840"))]
@@ -157,10 +76,12 @@ fn port_bit(port: GpioPort) -> bool {
     }
 }
 
-impl<T: Instance> BufferedUarte<T> {
+impl<'a, T: Instance> BufferedUarte<'a, T> {
     pub fn new(
         uarte: T,
         irq: T::Interrupt,
+        rx_buffer: &'a mut [u8],
+        tx_buffer: &'a mut [u8],
         mut pins: Pins,
         parity: Parity,
         baudrate: Baudrate,
@@ -219,74 +140,50 @@ impl<T: Instance> BufferedUarte<T> {
         uarte.baudrate.write(|w| w.baudrate().variant(baudrate));
 
         BufferedUarte {
-            started: false,
-            state: UnsafeCell::new(UarteState {
-                inner: uarte,
+            reg: PeripheralRegistration::new(
                 irq,
+                UarteState {
+                    inner: uarte,
+                    irq,
 
-                rx: RingBuf::new(),
-                rx_state: RxState::Idle,
-                rx_waker: WakerRegistration::new(),
+                    rx: RingBuffer::new(rx_buffer),
+                    rx_state: RxState::Idle,
+                    rx_waker: WakerRegistration::new(),
 
-                tx: RingBuf::new(),
-                tx_state: TxState::Idle,
-                tx_waker: WakerRegistration::new(),
-
-                _pin: PhantomPinned,
-            }),
+                    tx: RingBuffer::new(tx_buffer),
+                    tx_state: TxState::Idle,
+                    tx_waker: WakerRegistration::new(),
+                },
+            ),
+            wtf: PhantomData,
         }
-    }
-
-    fn with_state<'a, R>(
-        self: Pin<&'a mut Self>,
-        f: impl FnOnce(Pin<&'a mut UarteState<T>>) -> R,
-    ) -> R {
-        let Self { state, started } = unsafe { self.get_unchecked_mut() };
-
-        interrupt::free(|cs| {
-            let ptr = state.get();
-
-            if !*started {
-                T::set_state(cs, ptr);
-
-                *started = true;
-
-                // safety: safe because critical section ensures only one *mut UartState
-                // exists at the same time.
-                unsafe { Pin::new_unchecked(&mut *ptr) }.start();
-            }
-
-            // safety: safe because critical section ensures only one *mut UartState
-            // exists at the same time.
-            f(unsafe { Pin::new_unchecked(&mut *ptr) })
-        })
     }
 }
 
-impl<T: Instance> Drop for BufferedUarte<T> {
+impl<'a, T: Instance> Drop for BufferedUarte<'a, T> {
     fn drop(&mut self) {
         // stop DMA before dropping, because DMA is using the buffer in `self`.
         todo!()
     }
 }
 
-impl<T: Instance> AsyncBufRead for BufferedUarte<T> {
+impl<'a, T: Instance> AsyncBufRead for BufferedUarte<'a, T> {
     fn poll_fill_buf(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<&[u8]>> {
-        self.with_state(|s| s.poll_fill_buf(cx))
+        self.reg.with(|s| s.poll_fill_buf(cx))
     }
 
     fn consume(self: Pin<&mut Self>, amt: usize) {
-        self.with_state(|s| s.consume(amt))
+        self.reg.with(|s| s.consume(amt))
     }
 }
 
-impl<T: Instance> AsyncWrite for BufferedUarte<T> {
+impl<'a, T: Instance> AsyncWrite for BufferedUarte<'a, T> {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<Result<usize>> {
-        self.with_state(|s| s.poll_write(cx, buf))
+        self.reg.with(|s| s.poll_write(cx, buf))
     }
 }
 
-impl<T: Instance> UarteState<T> {
+impl<'a, T: Instance> UarteState<'a, T> {
     pub fn start(self: Pin<&mut Self>) {
         self.irq.set_handler(|| unsafe {
             interrupt::free(|cs| T::get_state(cs).as_mut().unwrap().on_interrupt());
@@ -506,38 +403,127 @@ mod private {
 }
 
 pub trait Instance: Deref<Target = uarte0::RegisterBlock> + Sized + private::Sealed {
-    type Interrupt: OwnedInterrupt;
-
-    #[doc(hidden)]
-    fn get_state(_cs: &CriticalSection) -> *mut UarteState<Self>;
-
-    #[doc(hidden)]
-    fn set_state(_cs: &CriticalSection, state: *mut UarteState<Self>);
+    type Interrupt: OwnedInterrupt + 'static;
+    type State<'a>: PeripheralState<Interrupt = Self::Interrupt> + 'a;
 }
-
-static mut UARTE0_STATE: *mut UarteState<crate::pac::UARTE0> = ptr::null_mut();
-#[cfg(any(feature = "52833", feature = "52840", feature = "9160"))]
-static mut UARTE1_STATE: *mut UarteState<crate::pac::UARTE1> = ptr::null_mut();
 
 impl Instance for crate::pac::UARTE0 {
     type Interrupt = interrupt::UARTE0_UART0Interrupt;
+}
 
-    fn get_state(_cs: &CriticalSection) -> *mut UarteState<Self> {
-        unsafe { UARTE0_STATE } // Safe because of CriticalSection
-    }
-    fn set_state(_cs: &CriticalSection, state: *mut UarteState<Self>) {
-        unsafe { UARTE0_STATE = state } // Safe because of CriticalSection
+impl<'a> PeripheralState for UarteState<'a, crate::pac::UARTE0> {
+    type Interrupt = interrupt::UARTE0_UART0Interrupt;
+    fn storage<'b>() -> &'b PeripheralStorage<Self> {
+        static STORAGE: PeripheralStorage<UarteState<'static, crate::pac::UARTE0>> =
+            PeripheralStorage::uninit();
+        &STORAGE
     }
 }
 
-#[cfg(any(feature = "52833", feature = "52840", feature = "9160"))]
-impl Instance for crate::pac::UARTE1 {
-    type Interrupt = interrupt::UARTE1Interrupt;
+// ===========================
+// here be dragons
+use core::mem;
+use core::mem::MaybeUninit;
 
-    fn get_state(_cs: &CriticalSection) -> *mut UarteState<Self> {
-        unsafe { UARTE1_STATE } // Safe because of CriticalSection
+pub(crate) struct PeripheralStorage<T>(MaybeUninit<UnsafeCell<T>>);
+impl<T> PeripheralStorage<T> {
+    pub const fn uninit() -> Self {
+        Self(MaybeUninit::uninit())
     }
-    fn set_state(_cs: &CriticalSection, state: *mut UarteState<Self>) {
-        unsafe { UARTE1_STATE = state } // Safe because of CriticalSection
+
+    unsafe fn as_mut_ptr(&self) -> *mut T {
+        (*self.0.as_ptr()).get()
+    }
+
+    unsafe fn as_mut(&self) -> &mut T {
+        &mut *self.as_mut_ptr()
+    }
+
+    unsafe fn write(&self, val: T) {
+        ptr::write(self.as_mut_ptr(), val)
+    }
+
+    unsafe fn drop_in_place(&self) {
+        ptr::drop_in_place(self.as_mut_ptr())
+    }
+
+    unsafe fn read(&self) -> T {
+        ptr::read(self.as_mut_ptr())
     }
 }
+
+trait PeripheralState: Sized {
+    type Interrupt: OwnedInterrupt;
+    fn storage<'a>() -> &'a PeripheralStorage<Self>;
+}
+
+struct PeripheralRegistration<P: PeripheralState> {
+    irq: P::Interrupt,
+    not_send: PhantomData<*mut P>,
+}
+
+impl<P: PeripheralState> PeripheralRegistration<P> {
+    fn new(irq: P::Interrupt, state: P) -> Self {
+        let storage = P::storage();
+        irq.enable();
+
+        // safety:
+        // - No other PeripheralRegistration can already exist because we have the owned interrupt
+        // - therefore, storage is uninitialized
+        // - therefore it's safe to overwrite it without dropping the previous contents
+
+        unsafe { storage.write(state) }
+        Self {
+            irq,
+            not_send: PhantomData,
+        }
+    }
+
+    fn with<R>(&mut self, f: impl FnOnce(&mut P) -> R) -> R {
+        self.irq.disable();
+        compiler_fence(Ordering::SeqCst);
+
+        // safety:
+        // - If a PeripheralRegistration instance exists, P::storage() is initialized.
+        // - It's OK to get a &mut to it since the irq is disabled.
+        let r = f(unsafe { P::storage().as_mut() });
+
+        compiler_fence(Ordering::SeqCst);
+        self.irq.enable();
+
+        r
+    }
+
+    fn irq(&mut self) -> &mut P::Interrupt {
+        &mut self.irq
+    }
+
+    fn free(self) -> (P::Interrupt, P) {
+        let irq = self.irq;
+        mem::forget(self);
+        let storage = P::storage();
+        (irq, unsafe { storage.read() })
+    }
+}
+
+impl<P: PeripheralState> Drop for PeripheralRegistration<P> {
+    fn drop(&mut self) {
+        let storage = P::storage();
+        unsafe { storage.drop_in_place() };
+    }
+}
+
+/*
+
+impl Peripheral for crate::pac::UARTE1 {
+    type State = UarteState<crate::pac::UARTE1>;
+    fn storage() -> &'static PeripheralStorage<Self::State, Self::Interrupt> {
+        static STORAGE: PeripheralStorage<
+            UarteState<crate::pac::UARTE1>,
+            interrupt::UARTE1Interrupt,
+        > = PeripheralStorage::new();
+        &STORAGE
+    }
+}
+
+*/

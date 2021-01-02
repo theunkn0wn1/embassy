@@ -17,6 +17,9 @@ use embassy::util::Forever;
 use embassy_nrf::buffered_uarte;
 use embassy_nrf::interrupt;
 
+static mut TX_BUFFER: [u8; 4096] = [0; 4096];
+static mut RX_BUFFER: [u8; 4096] = [0; 4096];
+
 #[task]
 async fn run() {
     let p = unwrap!(embassy_nrf::pac::Peripherals::take());
@@ -37,6 +40,8 @@ async fn run() {
     let u = buffered_uarte::BufferedUarte::new(
         p.UARTE0,
         irq,
+        unsafe { &mut RX_BUFFER },
+        unsafe { &mut TX_BUFFER },
         pins,
         buffered_uarte::Parity::EXCLUDED,
         buffered_uarte::Baudrate::BAUD115200,

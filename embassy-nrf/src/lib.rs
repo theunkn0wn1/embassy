@@ -2,6 +2,7 @@
 #![feature(generic_associated_types)]
 #![feature(asm)]
 #![feature(type_alias_impl_trait)]
+#![feature(const_fn)]
 
 #[cfg(not(any(
     feature = "52810",
@@ -50,6 +51,7 @@ pub use nrf52840_hal as hal;
 
 // This mod MUST go first, so that the others see its macros.
 pub(crate) mod fmt;
+pub(crate) mod ring_buffer;
 
 pub mod buffered_uarte;
 pub mod gpiote;
