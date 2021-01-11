@@ -9,7 +9,6 @@ heapless            = { version = "0.5.6", default-features = false }
 embassy             = { version = "0.1.0", path = "../embassy", features=["std", "log"]}
 embassy-std         = { version = "0.1.0", path = "../embassy-std" }
 embassy-net         = { version = "0.1.0", path = "../embassy-net", features=["std", "log"]}
-async-std = { version = "1.8.0", features = ["attributes", "unstable"]}
 env_logger = "0.8.2"
 log = "0.4.11"
 futures = "0.3.8"

@@ -4,7 +4,7 @@ use core::ops::{Deref, DerefMut, Range};
 use super::pool::{BitPool, Box, StaticPool};
 
 pub const MTU: usize = 1514;
-pub const PACKET_POOL_SIZE: usize = 2;
+pub const PACKET_POOL_SIZE: usize = 4;
 
 pool!(pub PacketPool: [Packet; PACKET_POOL_SIZE]);
 pub type PacketBox = Box<PacketPool>;

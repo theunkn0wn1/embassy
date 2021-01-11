@@ -19,7 +19,7 @@ mod tcp_socket;
 pub use config::{Config, Configurator, DhcpConfigurator, StaticConfigurator, UpConfig};
 pub use device::{Device, LinkState};
 pub use packet_pool::{Packet, PacketBox, PacketBuf};
-pub use stack::{init, Stack};
+pub use stack::{init, is_init, run};
 pub use tcp_socket::TcpSocket;
 
 #[cfg(feature = "std")]
@@ -33,4 +33,4 @@ pub use smoltcp::time::Duration as SmolDuration;
 pub use smoltcp::time::Instant as SmolInstant;
 pub use smoltcp::wire::{IpAddress, IpCidr, Ipv4Address, Ipv4Cidr};
 pub type Interface = smoltcp::iface::Interface<'static, 'static, 'static, device::DeviceAdapter>;
-pub type SocketSet = smoltcp::socket::SocketSet<'static, 'static, 'static>;
+pub type SocketSet = smoltcp::socket::SocketSet<'static, 'static>;
