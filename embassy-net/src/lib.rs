@@ -32,5 +32,5 @@ pub use smoltcp::phy::{DeviceCapabilities, Medium};
 pub use smoltcp::time::Duration as SmolDuration;
 pub use smoltcp::time::Instant as SmolInstant;
 pub use smoltcp::wire::{IpAddress, IpCidr, Ipv4Address, Ipv4Cidr};
-pub type Interface = smoltcp::iface::Interface<'static, 'static, 'static, device::DeviceAdapter>;
-pub type SocketSet = smoltcp::socket::SocketSet<'static, 'static>;
+pub type Interface = smoltcp::iface::Interface<'static, device::DeviceAdapter>;
+pub type SocketSet = smoltcp::socket::SocketSet<'static>;
