@@ -1,6 +1,7 @@
 #![no_std]
 #![no_main]
 #![feature(type_alias_impl_trait)]
+#![feature(asm)]
 
 #[path = "../example_common.rs"]
 mod example_common;
@@ -20,6 +21,7 @@ async fn run1() {
     loop {
         info!("BIG INFREQUENT TICK");
         Timer::after(Duration::from_ticks(64000)).await;
+        unsafe { asm!("udf 0xfe") }
     }
 }
 
@@ -39,6 +41,10 @@ static EXECUTOR: Forever<Executor> = Forever::new();
 fn main() -> ! {
     info!("Hello World!");
 
+    real_main();
+}
+
+fn real_main() -> ! {
     let p = unwrap!(embassy_nrf::pac::Peripherals::take());
 
     clocks::Clocks::new(p.CLOCK)
