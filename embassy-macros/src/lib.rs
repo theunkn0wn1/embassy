@@ -124,7 +124,7 @@ pub fn interrupt_declare(item: TokenStream) -> TokenStream {
             type Priority = crate::interrupt::Priority;
             fn number(&self) -> u16 {
                 use cortex_m::interrupt::InterruptNumber;
-                let irq = crate::pac::interrupt::#name;
+                let irq = crate::pac::Interrupt::#name;
                 irq.number() as u16
             }
             unsafe fn steal() -> Self {
