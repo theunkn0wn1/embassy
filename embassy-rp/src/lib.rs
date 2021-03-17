@@ -12,6 +12,7 @@ pub(crate) mod util;
 
 pub mod interrupt;
 
+pub mod dma;
 pub mod gpio;
 pub mod init;
 pub mod pll;
@@ -58,6 +59,19 @@ pub struct Peripherals {
 
     pub uart0: uart::Uart0,
     pub uart1: uart::Uart1,
+
+    pub dma_ch0: dma::Channel0,
+    pub dma_ch1: dma::Channel1,
+    pub dma_ch2: dma::Channel2,
+    pub dma_ch3: dma::Channel3,
+    pub dma_ch4: dma::Channel4,
+    pub dma_ch5: dma::Channel5,
+    pub dma_ch6: dma::Channel6,
+    pub dma_ch7: dma::Channel7,
+    pub dma_ch8: dma::Channel8,
+    pub dma_ch9: dma::Channel9,
+    pub dma_ch10: dma::Channel10,
+    pub dma_ch11: dma::Channel11,
 }
 
 impl Peripherals {
@@ -101,6 +115,18 @@ impl Peripherals {
             qspi_sd3: gpio::QspiSd3 { _private: () },
             uart0: uart::Uart0 { _private: () },
             uart1: uart::Uart1 { _private: () },
+            dma_ch0: dma::Channel0 { _private: () },
+            dma_ch1: dma::Channel1 { _private: () },
+            dma_ch2: dma::Channel2 { _private: () },
+            dma_ch3: dma::Channel3 { _private: () },
+            dma_ch4: dma::Channel4 { _private: () },
+            dma_ch5: dma::Channel5 { _private: () },
+            dma_ch6: dma::Channel6 { _private: () },
+            dma_ch7: dma::Channel7 { _private: () },
+            dma_ch8: dma::Channel8 { _private: () },
+            dma_ch9: dma::Channel9 { _private: () },
+            dma_ch10: dma::Channel10 { _private: () },
+            dma_ch11: dma::Channel11 { _private: () },
         }
     }
 }

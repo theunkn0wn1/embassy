@@ -19,6 +19,5 @@ log = { version = "0.4.11", optional = true }
 cortex-m-rt = "0.6.13"
 cortex-m = "0.7.1"
 
-rp2040-pac2  = { git = "https://github.com/Dirbaio/rp2040-pac" }
-#rp2040-pac2  = { path = "/home/dirbaio/rp/rp2040-pac2" }
+rp2040-pac2 = { version = "0.1.0", features = ["rt"] }
 embedded-hal = { version = "0.2.4", features = [ "unproven" ] }
