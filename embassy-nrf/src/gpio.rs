@@ -256,7 +256,7 @@ pub trait Pin: sealed::Pin + Sized {
 
     #[inline]
     fn psel_bits(&self) -> u32 {
-        self.pin_port() as u32
+        self.pin_port() as u32 | (1 << 31)
     }
 
     /// Convert from concrete pin type PX_XX to type erased `AnyPin`.
