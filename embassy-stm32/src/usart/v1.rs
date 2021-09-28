@@ -164,7 +164,7 @@ impl<'d, T: Instance, TxDma, RxDma> embassy_traits::uart::Write for Uart<'d, T, 
 
 // rustfmt::skip because intellij removes the 'where' claus on the associated type.
 #[rustfmt::skip]
-impl<'d, T: Instance, TxDma, RxDma> embassy_traits::uart::Read for Uart<'d, T, TxDma, RxDma>
+impl<'d, T: Instance, TxDma, RxDma: > embassy_traits::uart::Read for Uart<'d, T, TxDma, RxDma>
     where RxDma: crate::usart::RxDma<T>
 {
     type ReadFuture<'a> where Self: 'a = impl Future<Output = Result<(), embassy_traits::uart::Error>> + 'a;
@@ -174,26 +174,36 @@ impl<'d, T: Instance, TxDma, RxDma> embassy_traits::uart::Read for Uart<'d, T, T
     }
 }
 
-impl<'d, T: Instance, TxDma, RxDma> embassy_traits::uart::ReadUntilIdle
+impl<'d, T: Instance, TxDma, RxDma> ReadUntilIdle
     for Uart<'d, T, TxDma, RxDma>
+    where RxDma: crate::usart::RxDma<T>
 {
     type ReadUntilIdleFuture<'a> =
-        impl Future<Output = Result<(), embassy_traits::uart::Error>> + 'a;
+        impl Future<Output = Result<(usize), embassy_traits::uart::Error>> + 'a;
 
-    /// Reads until RX falls idle or the buffer fills. Whichever occurs first.
+    /// Reads until RX falls idle or the buffer fills. Whichever occurs   first.
     fn read_until_idle<'a>(&'a mut self, buf: &'a mut [u8]) -> Self::ReadUntilIdleFuture<'a> {
-        unsafe {
-            self.inner.regs().cr1().modify(|reg| {
-                reg.set_idleie(true);
-            });
-        }
-        let result = self.read_dma(buf).await;
-        // there is a special read sequence to clear the interrupt.
-        unsafe {
-            let _ = self.inner.regs().sr().idle();
-            let _ = self.inner.regs().dr().read();
+
+        async move {
+            unsafe {
+                self.inner.regs().cr1().modify(|reg| {
+                    reg.set_idleie(true);
+                });
+            }
+            let result = self.read_dma(buf).await;
+            // there is a special read sequence to clear the interrupt.
+            unsafe {
+                let _ = self.inner.regs().sr().read().idle();
+                let _ = self.inner.regs().dr().read();
+            }
+            unsafe {
+                self.inner.regs().cr1().modify(|reg| {
+                    reg.set_idleie(false);
+                });
+            }
+            result.map_err(|_| embassy_traits::uart::Error::Other)?;
+            Ok(0usize)
         }
 
-        result
     }
 }
